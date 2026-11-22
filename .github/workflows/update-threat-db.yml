@@ -1,0 +1,60 @@
+name: Build & Sign Weekly Spectre Threat DB (SPDB v1)
+
+on:
+  schedule:
+    # يعمل تلقائياً كل يوم أحد الساعة 03:00 UTC (مجاني 100% على المستودعات العامة)
+    - cron: '0 3 * * 0'
+  workflow_dispatch: # يسمح بتشغيل تحديث فوري بضغطة زر متى شئت
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install cryptography for Ed25519 signing
+        run: python -m pip install --no-cache-dir cryptography
+
+      - name: Build, verify & sign SPDB v1 threats.bin
+        env:
+          SPECTRE_SPDB_ED25519_PRIVATE_KEY: ${{ secrets.SPECTRE_SPDB_ED25519_PRIVATE_KEY }}
+        run: |
+          mkdir -p dist
+          python tools/build_threat_db.py \
+            --out-dir dist \
+            --skip-whitelist \
+            --skip-ml \
+            --emit-manifest \
+            --sign-key-env SPECTRE_SPDB_ED25519_PRIVATE_KEY \
+            --key-id spectre-spdb-2026-v1
+
+      - name: Verify release artifacts exist
+        run: |
+          test -s dist/threats.bin
+          test -s dist/manifest.json
+          test -s dist/manifest.sig
+          ls -lh dist/
+
+      - name: Publish signed GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="spdb-$(date -u +%Y%m%d-%H%M%S)"
+          gh release create "$TAG" \
+            dist/threats.bin \
+            dist/manifest.json \
+            dist/manifest.sig \
+            --title "Spectre SPDB v1 ($TAG)" \
+            --notes "Signed weekly threat database update (Ed25519 verified)." \
+            --latest
